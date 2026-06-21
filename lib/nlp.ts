@@ -48,6 +48,8 @@ const urgentTerms = [
 
 const negativeTerms = ["severe", "panic", "exhausted", "dropped", "errors", "scarcity", "dehydration", "missed"];
 
+type LlmProvider = "openai" | "anthropic" | "groq";
+
 export async function analyzeSignal(signal: RawSignal): Promise<SemanticSignal> {
   if (process.env.LLM_PROVIDER === "openai" && process.env.OPENAI_API_KEY) {
     return analyzeWithConfiguredLlm(signal, "openai");
@@ -55,6 +57,10 @@ export async function analyzeSignal(signal: RawSignal): Promise<SemanticSignal> 
 
   if (process.env.LLM_PROVIDER === "anthropic" && process.env.ANTHROPIC_API_KEY) {
     return analyzeWithConfiguredLlm(signal, "anthropic");
+  }
+
+  if (process.env.LLM_PROVIDER === "groq" && process.env.GROQ_API_KEY) {
+    return analyzeWithConfiguredLlm(signal, "groq");
   }
 
   return analyzeWithHeuristics(signal);
@@ -89,7 +95,7 @@ export function analyzeWithHeuristics(signal: RawSignal): SemanticSignal {
   };
 }
 
-async function analyzeWithConfiguredLlm(signal: RawSignal, provider: "openai" | "anthropic"): Promise<SemanticSignal> {
+async function analyzeWithConfiguredLlm(signal: RawSignal, provider: LlmProvider): Promise<SemanticSignal> {
   const fallback = analyzeWithHeuristics(signal);
 
   try {
@@ -103,7 +109,10 @@ async function analyzeWithConfiguredLlm(signal: RawSignal, provider: "openai" | 
     const text =
       provider === "openai"
         ? await callOpenAi(prompt)
+        : provider === "groq"
+        ? await callGroq(prompt)
         : await callAnthropic(prompt);
+
     const parsed = JSON.parse(text) as Partial<SemanticSignal>;
 
     return {
@@ -162,4 +171,24 @@ async function callAnthropic(prompt: string): Promise<string> {
   if (!response.ok) throw new Error(`Anthropic request failed: ${response.status}`);
   const json = await response.json();
   return json.content?.[0]?.text ?? "{}";
+}
+
+async function callGroq(prompt: string): Promise<string> {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: process.env.GROQ_MODEL ?? "llama-3.1-8b-instant",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  if (!response.ok) throw new Error(`Groq request failed: ${response.status}`);
+  const json = await response.json();
+  return json.choices?.[0]?.message?.content ?? "{}";
 }
